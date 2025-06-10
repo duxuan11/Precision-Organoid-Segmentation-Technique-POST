@@ -23,9 +23,8 @@
 
 |            *Sample_1*            |             *Sample_2*            |             *Sample_3*            |
 | :------------------------------: | :-------------------------------: | :-------------------------------: |
-| <img src="https://drive.google.com/uc?id=19ShmEUc_lpIKASy6zUq5F89q3HRsdfvr" /> |  <img src="https://drive.google.com/uc?id=1tJEwPgfiK18r34n_qronNpuQhjd20NhV" /> |  <img src="https://drive.google.com/uc?id=1KtoevItyasK2samFIE0RfrQQ7cHo0QBZ" /> | :------------------------------: | :-------------------------------: | :-------------------------------: |
+| <img src="https://drive.google.com/uc?id=19ShmEUc_lpIKASy6zUq5F89q3HRsdfvr" /> |  <img src="https://drive.google.com/uc?id=1tJEwPgfiK18r34n_qronNpuQhjd20NhV" /> |  <img src="https://drive.google.com/uc?id=1KtoevItyasK2samFIE0RfrQQ7cHo0QBZ" /> | 
 |            *Sample_4*            |             *Sample_5*            |             *Sample_6*            |
-| :------------------------------: | :-------------------------------: | :-------------------------------: |
 | <img src="https://drive.google.com/uc?id=1I5UW-xzCLMQD0IhlRwdCHqz8nFMxUa8X" /> |  <img src="https://drive.google.com/uc?id=1BbR6YjzI8xKwCQL-t-5pul5PcLRrJNrs" /> |  <img src="https://drive.google.com/uc?id=1puGcK3elZ3__nfKTa2iVcMajLhLaG1qQ" /> |
 <br/>
 This repo is the official implementation of "[**Segment any organoid**](https://www.researchgate.net/publication/384542893_Segment_Any_Organoid_A_Generalist_Algorithm_for_High-Throughput_Drug_Screening_of_Organoid)".

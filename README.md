@@ -1,4 +1,4 @@
-<h1 align="center">Precision Organoid Segmentation Technique (POST) (SAO)</h1>
+<h1 align="center">Precision Organoid Segmentation Technique (POST)</h1>
 
 <div align='center'>
     <a href='https://scholar.google.com' target='_blank'><strong>Xuan Du</strong></a><sup> 1,3</sup>,&thinsp;
@@ -27,7 +27,7 @@
 |            *Sample_4*            |             *Sample_5*            |             *Sample_6*            |
 | <img src="https://drive.google.com/uc?id=1I5UW-xzCLMQD0IhlRwdCHqz8nFMxUa8X" /> |  <img src="https://drive.google.com/uc?id=1BbR6YjzI8xKwCQL-t-5pul5PcLRrJNrs" /> |  <img src="https://drive.google.com/uc?id=1puGcK3elZ3__nfKTa2iVcMajLhLaG1qQ" /> |
 <br/>
-This repo is the official implementation of "[**Segment any organoid**](https://www.researchgate.net/publication/384542893_Segment_Any_Organoid_A_Generalist_Algorithm_for_High-Throughput_Drug_Screening_of_Organoid)".
+This repo is the official implementation of "[**Precision Organoid Segmentation Technique**]
 
 ## Documentation 📑
 > This is about the organoid/organ-on-a-chip intelligent segmentation algorithm.
@@ -37,10 +37,6 @@ This repo is the official implementation of "[**Segment any organoid**](https://
 ```shell
 pip install -r requirements.txt
 ```
-#### Dataset Preparation
-## Traning
-```shell
-python train.py
 ```
 ## Prediction
 ```shell

@@ -57,7 +57,7 @@ pip install -r requirements.txt
 ### Inference
 Before run this script, you should download pre-trained models, and put them into weights file. 
 ```shell
-python inference.py --yolo_weight weights/yolov8l.pt --seg_encoder_weight weights/tinysam_encoder.onnx --seg_decoder_weight weights/tinysam_decoder.onnx --img_path test/example.tif
+python inference.py --yolo_weight weights/yolov8m.onnx --seg_encoder_weight weights/tinysam_encoder.onnx --seg_decoder_weight weights/tinysam_decoder.onnx --img_path test/example.tif
 ```
 ### Training
 **1. Install YOLO Packages:**
@@ -66,13 +66,13 @@ pip install ultralytics
 ```
 **2. Run Training Script:**
 ```shell
-python train.py --model_path weights/yolo8l.pt --data_path_yaml organoid.yaml --epochs 100 --img_size 1024 --batch_size 16
+python train.py --model_path weights/yolo8m.pt --data_path_yaml organoid.yaml --epochs 100 --img_size 1024 --batch_size 16
 ```
-You can refer to the training process of [yolov8](https://github.com/ultralytics/ultralytics) and [yolov9](https://github.com/WongKinYiu/yolov9).Then use these trained models in this code.
+You can refer to the training process of [yolov8](https://github.com/ultralytics/ultralytics) and [yolov9](https://github.com/WongKinYiu/yolov9), and download the pre-trained model.Then use these trained models in this code.
 **Notes:** Since Tinysam has already been fine-tuned on a large organoid dataset and converted to ONNX, no additional training is required.
 ### Pre-trained Models
 Download the pre-trained model weights from: [Google Drive](https://drive.google.com/drive/folders/1-Dd-zFxHM2GfprqbEv2Tv0_mLNu88SuW?usp=sharing)
-
+Download the yolov8 pre-trained model weights from: [Github](https://docs.ultralytics.com/zh/models/yolov8/#performance-metrics)
 ## License
 The code is released under the MIT License. It is a short, permissive software license. Basically, you can do whatever you want as long as you include the original copyright and license notice in any copy of the software/source.
 

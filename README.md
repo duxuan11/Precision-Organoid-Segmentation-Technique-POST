@@ -57,12 +57,12 @@ pip install -r requirements.txt
 ### Inference
 Before run this script, you should download pre-trained models, and put them into weights file. 
 ```shell
-python inference.py --yolo_weight weights/yolov8m.onnx --seg_encoder_weight weights/tinysam_encoder.onnx --seg_decoder_weight weights/tinysam_decoder.onnx --img_path test/example.tif
+python inference.py --yolo_weight weights/yolo8_3_25.onnx --seg_encoder_weight weights/tinysam_encoder.onnx --seg_decoder_weight weights/tinysam_decoder.onnx --img_path img/example1.tiff
 ```
 ### Training
 **1. Install YOLO Packages:**
 ```shell
-pip install ultralytics
+pip install ultralytics==8.0.224
 ```
 **2. Run Training Script:**
 ```shell

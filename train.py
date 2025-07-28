@@ -22,7 +22,7 @@ def train_yolo_model(data_path_yaml, model_path, img_size=1024, epochs=100, batc
         data=data_path_yaml,  # Path to dataset configuration file
         epochs=epochs,  # Number of training epochs
         imgsz=img_size,  # Image size for training
-        batch_size=batch_size,  # Batch size for training
+        batch=batch_size,  # Batch size for training
         device="0",  # Device to run on (e.g., 'cpu', 0, [0,1,2,3])
     )
 

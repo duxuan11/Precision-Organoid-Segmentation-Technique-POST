@@ -10,7 +10,7 @@ import concurrent.futures
 
 class mask_process:
 
-    def __init__(self, resized_width, resized_height):
+    def __init__(self,resized_width, resized_height):
         self.masks_list = []
         self.coord_list = []
         self.resized_width = resized_width
@@ -22,16 +22,11 @@ class mask_process:
     def append_coord(self, coord):
         self.coord_list.append(coord)
 
-
 class TinySam:
     def __init__(self, encoder_path, decoder_path):
-        self._encoder_session = ort.InferenceSession(
-            encoder_path, providers=["CPUExecutionProvider"]
-        )  # cpu faster
+        self._encoder_session = ort.InferenceSession(encoder_path, providers=['CPUExecutionProvider']) #cpu faster
 
-        self._decoder_session = ort.InferenceSession(
-            decoder_path, providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
-        )
+        self._decoder_session = ort.InferenceSession(decoder_path, providers=['CUDAExecutionProvider','CPUExecutionProvider'])
 
         self.event = threading.Event()
         self._lock = threading.Lock()
@@ -42,10 +37,9 @@ class TinySam:
         self._mean = np.array([123.675, 116.28, 103.53])
         self._std = np.array([[58.395, 57.12, 57.375]])
 
-    # 2
+    #2
     def set_name(self, name):
         self.name = name
-
     def _resize_image(self, image):
         self._orig_width, self._orig_height = image.size
         self.resized_width, self.resized_height = image.size
@@ -55,22 +49,13 @@ class TinySam:
         else:
             self.resized_height = 1024
             self.resized_width = int(1024 / self._orig_height * self._orig_width)
-        return np.array(
-            image.resize(
-                (self.resized_width, self.resized_height), Image.Resampling.BILINEAR
-            )
-        )
-
-    # 4
+        return np.array(image.resize((self.resized_width, self.resized_height), Image.Resampling.BILINEAR))
+    #4
     def _image_padding(self, input_array: np.ndarray):
         if self.resized_height < self.resized_width:
-            input_array = np.pad(
-                input_array, ((0, 0), (0, 0), (0, 1024 - self.resized_height), (0, 0))
-            )
+            input_array = np.pad(input_array,((0,0),(0,0),(0,1024-self.resized_height),(0,0)))
         else:
-            input_array = np.pad(
-                input_array, ((0, 0), (0, 0), (0, 0), (0, 1024 - self.resized_width))
-            )
+            input_array = np.pad(input_array,((0,0),(0,0),(0,0),(0,1024-self.resized_width)))
         return input_array
 
     def set_image(self, image):
@@ -79,10 +64,10 @@ class TinySam:
             self._image_embedding = self._image_embedding_cache.get(
                 self._image.tobytes()
             )
-        # 设置图像时，就进行embedding
+        #设置图像时，就进行embedding
         if self._image_embedding is None:
             self._thread = threading.Thread(
-                target=self._compute_and_cache_image_embedding
+                target = self._compute_and_cache_image_embedding
             )
             self._thread.start()
 
@@ -92,6 +77,7 @@ class TinySam:
             image = self._resize_image(self._image)
             input_array = self._preprocess(image)
             input_array = self._image_padding(input_array)
+
 
             outputs = self._encoder_session.run(
                 output_names=None,
@@ -104,12 +90,12 @@ class TinySam:
             self._image_embedding_cache[self._image.tobytes()] = self._image_embedding
             print("Done computing image embedding.")
             self.event.set()
-
-    # 3
+    #3
     def _preprocess(self, images: np.ndarray):
         input_tensor = (images - self._mean) / self._std
         input_tensor = input_tensor.transpose(2, 0, 1)[None]
         return input_tensor
+
 
     def _get_image_embedding(self):
         if self._thread is not None:
@@ -121,33 +107,13 @@ class TinySam:
     def predict_mask_from_bboxes(self, bboxes):
         with self._lock:
             self.event.wait()
-            masks_list = _compute_mask_from_bboxes(
-                self._decoder_session,
-                self._image_embedding,
-                self._bboxes_batch_size,
-                bboxes,
-                self.resized_width,
-                self.resized_height,
-                self._orig_width,
-                self._orig_height,
-            )
+            masks_list =  _compute_mask_from_bboxes(self._decoder_session, self._image_embedding,self._bboxes_batch_size,bboxes,
+                                self.resized_width, self.resized_height, self._orig_width, self._orig_height)
             return masks_list
 
 
 class Decoder_Thread(threading.Thread):
-    def __init__(
-        self,
-        session,
-        coords,
-        labels,
-        masks_list,
-        image_embedding,
-        onnx_mask_input,
-        onnx_has_mask_input,
-        orig_height,
-        orig_width,
-        event,
-    ):
+    def __init__(self, session, coords, labels, masks_list,  image_embedding, onnx_mask_input, onnx_has_mask_input, orig_height, orig_width, event):
         threading.Thread.__init__(self)
         self.session = session
         self.coords = coords
@@ -164,19 +130,14 @@ class Decoder_Thread(threading.Thread):
         # 执行 ONNX Runtime 的运行操作
         self.orig_height = 1024
         self.orig_width = 1024
-        outputs = self.session.run(
-            None,
-            {
-                "image_embeddings": self.image_embedding,
-                "point_coords": self.coords,
-                "point_labels": self.labels,
-                "mask_input": self.onnx_mask_input,
-                "has_mask_input": self.onnx_has_mask_input,
-                "orig_im_size": np.array(
-                    [self.orig_height, self.orig_width], dtype=np.float32
-                ),
-            },
-        )
+        outputs = self.session.run(None, {
+            "image_embeddings": self.image_embedding,
+            "point_coords": self.coords,
+            "point_labels": self.labels,
+            "mask_input": self.onnx_mask_input,
+            "has_mask_input": self.onnx_has_mask_input,
+            "orig_im_size": np.array([self.orig_height, self.orig_width], dtype=np.float32),
+        })
         batch_coords = self.coords.astype(int)
         batch_masks = np.squeeze(outputs[2] > 0, axis=1)
         del outputs
@@ -192,8 +153,8 @@ class Decoder_Thread(threading.Thread):
                 continue
             y_min, x_min = mask_indices.min(axis=0)  # Find minimum row and column
             y_max, x_max = mask_indices.max(axis=0)  # Find maximum row and column
-            x_max = min(x_max + 1, self.orig_width)
-            y_max = min(y_max + 1, self.orig_height)
+            x_max = min(x_max+1, self.orig_width)
+            y_max = min(y_max+1, self.orig_height)
             y_slice = slice(y_min, y_max)
             x_slice = slice(x_min, x_max)
             self.masks_list.append_mask(mask[y_slice, x_slice])
@@ -204,15 +165,8 @@ class Decoder_Thread(threading.Thread):
 
 
 def _compute_mask_from_bboxes(
-    decoder_session,
-    image_embedding,
-    bboxes_batch_size,
-    bboxes,
-    resized_width,
-    resized_height,
-    orig_width,
-    orig_height,
-):
+        decoder_session, image_embedding, bboxes_batch_size, bboxes,
+    resized_width, resized_height, orig_width, orig_height):
     total_boxes = len(bboxes)
     bbox_labels = np.ones((total_boxes, 2))
     bbox_labels[:, 0] *= 2  # 第一列设置为2
@@ -229,26 +183,17 @@ def _compute_mask_from_bboxes(
     onnx_mask_input = np.zeros((1, 1, 256, 256), dtype=np.float32)
     onnx_has_mask_input = np.zeros(1, dtype=np.float32)
 
-    # masks_list = []
+    #masks_list = []
     masks_list = mask_process(resized_width, resized_height)
     threads = []
     for i in range(0, total_boxes, bboxes_batch_size):
-        coords = onnx_coord[i : min(i + bboxes_batch_size, total_boxes), ...]
-        labels = onnx_label[i : min(i + bboxes_batch_size, total_boxes), ...]
+        coords = onnx_coord[i: min(i+ bboxes_batch_size, total_boxes),...]
+        labels = onnx_label[i: min(i+ bboxes_batch_size, total_boxes),...]
         # 创建事件
         event = threading.Event()
-        thread = Decoder_Thread(
-            decoder_session,
-            coords,
-            labels,
-            masks_list,
-            image_embedding,
-            onnx_mask_input,
-            onnx_has_mask_input,
-            orig_height,
-            orig_width,
-            event,
-        )
+        thread = Decoder_Thread( decoder_session, coords, labels, masks_list,  image_embedding,
+                                onnx_mask_input, onnx_has_mask_input, orig_height, orig_width,
+                                event)
         threads.append(thread)
         thread.start()
         # 等待事件
@@ -270,50 +215,35 @@ def process_mask(mask, coord, img):
     new_mask = np.zeros((img.shape[0], img.shape[1]), dtype=bool)
     new_mask[ymin:ymax, xmin:xmax] = mask
 
-    color_mask = np.concatenate(
-        [255 * np.random.uniform(0.15, 1, 3), [0.7]]
-    )  # np.random.random(3)
+    color_mask = np.concatenate([255 * np.random.uniform(0.15, 1, 3), [0.7]]) #np.random.random(3)
 
     img[new_mask] = color_mask
-    contours, _ = cv2.findContours(
-        new_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
-    cv2.drawContours(img, contours, -1, (0, 0, 255, 255), 2)
-
+    contours, _ = cv2.findContours(new_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(img, contours, -1, (0, 0, 255,255), 2)
 
 def interpolate_last_two_dimensions(roi_image_nd, new_height, new_width):
     return cv2.resize(roi_image_nd, (new_width, new_height))
 
-
 def show_anns(masks_list, coord_list, width, height, src_img):
     if len(masks_list) == 0:
         return
-    # sorted_anns = sorted(anns, key=(lambda x: x['area']), reverse=True)
+    #sorted_anns = sorted(anns, key=(lambda x: x['area']), reverse=True)
     img = np.ones((height, width, 4))
-    # masks = masks > 0
-    img[:, :, 3] = 0
+    #masks = masks > 0
+    img[:,:,3] = 0
     # for mask in anns:
     #     m = mask
     #     color_mask = np.concatenate([255*np.random.random(3),[0.5]])
     #     img[m] = color_mask
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = [
-            executor.submit(process_mask, mask=mask, coord=coord_list[i], img=img)
-            for i, mask in enumerate(masks_list)
-        ]
+        futures = [executor.submit(process_mask, mask=mask, coord = coord_list[i], img = img) for i,mask in enumerate(masks_list)]
         concurrent.futures.wait(futures)
 
-    mask = img[..., 3] == 0
+    mask = (img[...,3] == 0)
 
-    img[mask, 0:3] = np.array(
-        src_img.resize((img.shape[1], img.shape[0]), Image.BILINEAR)
-    )[mask]
+    img[mask,0:3] = np.array(src_img.resize((img.shape[1],img.shape[0]),Image.BILINEAR))[mask]
 
-    img = interpolate_last_two_dimensions(img, src_img.size[0], src_img.size[1])
-    # blend_image = Image.fromarray(img.astype(np.uint8)).convert("RGB").resize(src_img.size)
-    blend_image = Image.blend(
-        src_img,
-        Image.fromarray(img.astype(np.uint8)).convert("RGB").resize(src_img.size),
-        alpha=0.7,
-    )
+    img = interpolate_last_two_dimensions(img, src_img.size[0],src_img.size[1])
+    #blend_image = Image.fromarray(img.astype(np.uint8)).convert("RGB").resize(src_img.size)
+    blend_image = Image.blend(src_img, Image.fromarray(img.astype(np.uint8)).convert("RGB").resize(src_img.size), alpha=0.7)
     blend_image.show()

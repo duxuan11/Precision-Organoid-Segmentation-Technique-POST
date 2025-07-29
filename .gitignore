@@ -1,7 +1,8 @@
-.vscode
 __pycache__
-.pytest_cache
+.pytest_cache/
 weights/
 .pt
 .onnx
 datasets/
+.vscode/
+__pycache__/  # 字节码缓存目录

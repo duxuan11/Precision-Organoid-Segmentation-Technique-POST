@@ -1,11 +1,11 @@
 import collections
+import os
 import threading
 from copy import deepcopy
 import numpy as np
 import onnxruntime as ort
 from PIL import Image
 import cv2
-import concurrent.futures
 
 
 class mask_process:
@@ -105,11 +105,14 @@ class TinySam:
             return self._image_embedding
 
     def predict_mask_from_bboxes(self, bboxes):
-        with self._lock:
-            self.event.wait()
-            masks_list =  _compute_mask_from_bboxes(self._decoder_session, self._image_embedding,self._bboxes_batch_size,bboxes,
-                                self.resized_width, self.resized_height, self._orig_width, self._orig_height)
-            return masks_list
+        # Wait for the encoder thread to finish (joins it) before running the decoder.
+        # The previous version acquired self._lock and then called self.event.wait().
+        # _compute_and_cache_image_embedding() holds the same lock for its whole body,
+        # so if the encoder thread had not acquired the lock yet, both threads blocked
+        # forever (the main thread waiting for the event, the worker waiting for the lock).
+        image_embedding = self._get_image_embedding()
+        return _compute_mask_from_bboxes(self._decoder_session, image_embedding, self._bboxes_batch_size, bboxes,
+                            self.resized_width, self.resized_height, self._orig_width, self._orig_height)
 
 
 class Decoder_Thread(threading.Thread):
@@ -211,9 +214,19 @@ def _compute_mask_from_bboxes(
 
 
 def process_mask(mask, coord, img):
-    xmin, ymin, xmax, ymax = coord
-    new_mask = np.zeros((img.shape[0], img.shape[1]), dtype=bool)
-    new_mask[ymin:ymax, xmin:xmax] = mask
+    xmin, ymin, xmax, ymax = [int(v) for v in coord]
+    img_h, img_w = img.shape[:2]
+    # Coordinates are expressed in the resized space, so for images whose aspect ratio is
+    # not 1:1 the box can exceed the canvas (e.g. wide/landscape images). Clip it.
+    xmin, ymin = max(0, xmin), max(0, ymin)
+    xmax, ymax = min(img_w, xmax), min(img_h, ymax)
+    if xmax <= xmin or ymax <= ymin:
+        return
+    h = min(mask.shape[0], ymax - ymin)
+    w = min(mask.shape[1], xmax - xmin)
+
+    new_mask = np.zeros((img_h, img_w), dtype=bool)
+    new_mask[ymin:ymin + h, xmin:xmin + w] = mask[:h, :w]
 
     color_mask = np.concatenate([255 * np.random.uniform(0.15, 1, 3), [0.7]]) #np.random.random(3)
 
@@ -224,9 +237,13 @@ def process_mask(mask, coord, img):
 def interpolate_last_two_dimensions(roi_image_nd, new_height, new_width):
     return cv2.resize(roi_image_nd, (new_width, new_height))
 
-def show_anns(masks_list, coord_list, width, height, src_img):
+def show_anns(masks_list, coord_list, width, height, src_img, save_path=None):
+    """width/height 请传 resize 后的尺寸（mask_process.resized_width/resized_height）。
+
+    save_path 为 None 时保持原有行为（弹窗预览）；指定路径则保存到磁盘，便于无界面环境批量运行。
+    """
     if len(masks_list) == 0:
-        return
+        return None
     #sorted_anns = sorted(anns, key=(lambda x: x['area']), reverse=True)
     img = np.ones((height, width, 4))
     #masks = masks > 0
@@ -235,9 +252,10 @@ def show_anns(masks_list, coord_list, width, height, src_img):
     #     m = mask
     #     color_mask = np.concatenate([255*np.random.random(3),[0.5]])
     #     img[m] = color_mask
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = [executor.submit(process_mask, mask=mask, coord = coord_list[i], img = img) for i,mask in enumerate(masks_list)]
-        concurrent.futures.wait(futures)
+    # Draw sequentially: the previous implementation used a ThreadPoolExecutor where every
+    # worker wrote into the same canvas array, which is a data race.
+    for mask, coord in zip(masks_list, coord_list):
+        process_mask(mask, coord, img)
 
     mask = (img[...,3] == 0)
 
@@ -246,4 +264,10 @@ def show_anns(masks_list, coord_list, width, height, src_img):
     img = interpolate_last_two_dimensions(img, src_img.size[0],src_img.size[1])
     #blend_image = Image.fromarray(img.astype(np.uint8)).convert("RGB").resize(src_img.size)
     blend_image = Image.blend(src_img, Image.fromarray(img.astype(np.uint8)).convert("RGB").resize(src_img.size), alpha=0.7)
-    blend_image.show()
+    if save_path:
+        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+        blend_image.save(save_path)
+        print(f"Result saved to {os.path.abspath(save_path)}")
+    else:
+        blend_image.show()
+    return blend_image

@@ -3,7 +3,6 @@ from POST.models.predict import get_sliced_prediction
 from POST.tinysam.tiny_sam import TinySam, show_anns
 from PIL import Image
 import numpy as np
-import threading
 import argparse
 
 
@@ -49,10 +48,15 @@ def object_detection_inference(
     return boxes
 
 
-def tinysam_inference(image_path, boxes, tinysam):
+def tinysam_inference(image_path, boxes, tinysam, output_path=None):
     image = read_image(image_path)
-    thread1 = threading.Thread(target=tinysam.set_image(image))
-    thread1.start()
+    # set_image() launches a background thread that computes the image embedding.
+    # Wait for it explicitly before decoding. The previous code used
+    # threading.Thread(target=tinysam.set_image(image)), which called set_image()
+    # synchronously and passed None as the target, so the thread raised TypeError
+    # and the embedding was never awaited.
+    tinysam.set_image(image)
+    tinysam._get_image_embedding()
     mask_process = tinysam.predict_mask_from_bboxes(boxes)
     show_anns(
         mask_process.masks_list,
@@ -60,6 +64,7 @@ def tinysam_inference(image_path, boxes, tinysam):
         mask_process.resized_width,
         mask_process.resized_height,
         image,
+        save_path=output_path,
     )
 
 
@@ -87,6 +92,12 @@ def main():
         help="checkpoint file.",
     )
     parser.add_argument("--img_path", help="The inference image path.")
+    parser.add_argument(
+        "--output_path",
+        default=None,
+        type=str,
+        help="Path to save the visualization result. If not set, the result is shown in a window.",
+    )
     parser.add_argument(
         "--slice_height",
         default=1024,
@@ -142,7 +153,7 @@ def main():
         encoder_path=seg_encoder_weight,
         decoder_path=seg_decoder_weight,
     )
-    tinysam_inference(image_path, boxes, tinysam)
+    tinysam_inference(image_path, boxes, tinysam, output_path=args.output_path)
 
 
 if __name__ == "__main__":

@@ -74,7 +74,7 @@ You can refer to the training process of [yolov8](https://github.com/ultralytics
 Download the pre-trained model weights from: [Google Drive](https://drive.google.com/drive/folders/1-Dd-zFxHM2GfprqbEv2Tv0_mLNu88SuW?usp=sharing)<br>
 Download the yolov8 pre-trained model weights from: [Github](https://docs.ultralytics.com/zh/models/yolov8/#performance-metrics)
 ## License
-The code is released under the MIT License. It is a short, permissive software license. Basically, you can do whatever you want as long as you include the original copyright and license notice in any copy of the software/source.
+Commercial use of the Software, including without limitation use in products or services, use by for-profit entities, or use for any purpose intended to generate revenue, is strictly prohibited without the prior written permission of the copyright holder. For commercial licensing inquiries, please contact [duxuan9470@gmail.com].
 
 ## Acknowledgement
 Our project is developed based on [yolov8](https://github.com/ultralytics/ultralytics),[yolov9](https://github.com/WongKinYiu/yolov9), and [TinySAM](https://github.com/xinghaochen/TinySAM).

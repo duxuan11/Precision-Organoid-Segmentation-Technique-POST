@@ -63,18 +63,27 @@ class ObjectPredictionList(Sequence):
             return self.list
 
 
+def _object_prediction_list_to_array(object_prediction_list: ObjectPredictionList) -> np.ndarray:
+    """Single pass conversion to a (N, 6) array of [x1, y1, x2, y2, score, category_id].
+
+    The previous implementation wrote the six values one by one into a freshly allocated
+    tensor/array, which costs ~10k python attribute lookups for a few thousand predictions.
+    """
+    rows = [
+        (*object_prediction.bbox.to_xyxy(), object_prediction.score.value, object_prediction.category.id)
+        for object_prediction in object_prediction_list.list
+    ]
+    if not rows:
+        return np.zeros((0, 6), dtype=np.float32)
+    return np.asarray(rows, dtype=np.float32)
+
+
 def object_prediction_list_to_torch(object_prediction_list: ObjectPredictionList) -> torch.tensor:
     """
     Returns:
         torch.tensor of size N x [x1, y1, x2, y2, score, category_id]
     """
-    num_predictions = len(object_prediction_list)
-    torch_predictions = torch.zeros([num_predictions, 6], dtype=torch.float32)
-    for ind, object_prediction in enumerate(object_prediction_list):
-        torch_predictions[ind, :4] = torch.tensor(object_prediction.tolist().bbox.to_xyxy(), dtype=torch.float32)
-        torch_predictions[ind, 4] = object_prediction.tolist().score.value
-        torch_predictions[ind, 5] = object_prediction.tolist().category.id
-    return torch_predictions
+    return torch.from_numpy(_object_prediction_list_to_array(object_prediction_list).copy())
 
 
 def object_prediction_list_to_numpy(object_prediction_list: ObjectPredictionList) -> np.ndarray:
@@ -82,13 +91,7 @@ def object_prediction_list_to_numpy(object_prediction_list: ObjectPredictionList
     Returns:
         np.ndarray of size N x [x1, y1, x2, y2, score, category_id]
     """
-    num_predictions = len(object_prediction_list)
-    numpy_predictions = np.zeros([num_predictions, 6], dtype=np.float32)
-    for ind, object_prediction in enumerate(object_prediction_list):
-        numpy_predictions[ind, :4] = np.array(object_prediction.tolist().bbox.to_xyxy(), dtype=np.float32)
-        numpy_predictions[ind, 4] = object_prediction.tolist().score.value
-        numpy_predictions[ind, 5] = object_prediction.tolist().category.id
-    return numpy_predictions
+    return _object_prediction_list_to_array(object_prediction_list)
 
 
 def calculate_box_union(box1: Union[List[int], np.ndarray], box2: Union[List[int], np.ndarray]) -> List[int]:

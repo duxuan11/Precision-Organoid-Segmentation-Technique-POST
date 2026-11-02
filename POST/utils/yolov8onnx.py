@@ -3,6 +3,9 @@ from typing import Optional
 
 import numpy as np
 
+# resolved lazily by _get_torchvision_nms(): None = not initialised yet, False = unavailable
+_TORCHVISION_NMS = None
+
 #from sahi.utils.yolov8 import download_yolov8n_model
 
 
@@ -37,26 +40,101 @@ def non_max_supression(boxes: np.ndarray, scores: np.ndarray, iou_threshold: flo
 
     Returns:
         np.ndarray: Filtered bounding boxes
+
+    Notes:
+        This used to be a pure python `while` loop (O(n^2) with numpy call overhead per
+        iteration). It now uses `torchvision.ops.nms` when available and a vectorised
+        numpy fallback otherwise.
     """
-    # Sort by score
-    sorted_indices = np.argsort(scores)[::-1]
+    if len(boxes) == 0:
+        return []
 
-    keep_boxes = []
-    while sorted_indices.size > 0:
-        # Pick the last box
-        box_id = sorted_indices[0]
-        keep_boxes.append(box_id)
+    _nms = _get_torchvision_nms()
+    if _nms is not None:
+        return _nms(boxes, scores, iou_threshold)
+    return _numpy_nms(boxes, scores, iou_threshold)
 
-        # Compute IoU of the picked box with the rest
-        ious = compute_iou(boxes[box_id, :], boxes[sorted_indices[1:], :])
 
-        # Remove boxes with IoU over the threshold
-        keep_indices = np.where(ious < iou_threshold)[0]
+def _get_torchvision_nms():
+    """Return a torchvision based nms function, or None when torchvision is unavailable."""
+    global _TORCHVISION_NMS
+    if _TORCHVISION_NMS is False:
+        return None
+    if _TORCHVISION_NMS is None:
+        try:
+            import torch
+            from torchvision.ops import nms as torchvision_nms
 
-        # print(keep_indices.shape, sorted_indices.shape)
-        sorted_indices = sorted_indices[keep_indices + 1]
+            def _run(boxes, scores, iou_threshold):
+                keep = torchvision_nms(
+                    torch.as_tensor(boxes, dtype=torch.float32),
+                    torch.as_tensor(scores, dtype=torch.float32),
+                    float(iou_threshold),
+                )
+                return keep.tolist()
 
-    return keep_boxes
+            _TORCHVISION_NMS = _run
+        except Exception:  # pragma: no cover - torchvision is optional
+            _TORCHVISION_NMS = False
+            return None
+    return _TORCHVISION_NMS
+
+
+def _numpy_nms(boxes: np.ndarray, scores: np.ndarray, iou_threshold: float) -> list:
+    """Greedy numpy NMS used when torchvision is not installed."""
+    return greedy_nms(boxes, scores, match_threshold=iou_threshold, match_metric="IOU")
+
+
+def greedy_nms(
+    boxes: np.ndarray,
+    scores: np.ndarray,
+    match_threshold: float = 0.5,
+    match_metric: str = "IOU",
+) -> list:
+    """Vectorised greedy non-maximum suppression.
+
+    Args:
+        boxes: (N, 4) array of [x1, y1, x2, y2]
+        scores: (N,) confidence scores
+        match_threshold: boxes overlapping more than this are suppressed
+        match_metric: "IOU" (intersection over union) or "IOS" (intersection over the
+            smaller area)
+
+    Returns:
+        list of kept indices, ordered by decreasing score
+    """
+    boxes = np.asarray(boxes, dtype=np.float64)
+    scores = np.asarray(scores, dtype=np.float64).reshape(-1)
+    if boxes.size == 0:
+        return []
+
+    x1 = boxes[:, 0]
+    y1 = boxes[:, 1]
+    x2 = boxes[:, 2]
+    y2 = boxes[:, 3]
+    areas = (x2 - x1) * (y2 - y1)
+
+    order = np.argsort(-scores, kind="stable")
+    keep = []
+    while order.size > 0:
+        current = order[0]
+        keep.append(int(current))
+        if order.size == 1:
+            break
+        rest = order[1:]
+        xx1 = np.maximum(x1[current], x1[rest])
+        yy1 = np.maximum(y1[current], y1[rest])
+        xx2 = np.minimum(x2[current], x2[rest])
+        yy2 = np.minimum(y2[current], y2[rest])
+        inter = np.clip(xx2 - xx1, 0, None) * np.clip(yy2 - yy1, 0, None)
+        if match_metric == "IOS":
+            # normalize by the smaller of the two areas
+            denominator = np.minimum(areas[current], areas[rest])
+        else:
+            denominator = areas[current] + areas[rest] - inter
+        overlap = np.divide(inter, denominator, out=np.zeros_like(inter), where=denominator > 0)
+        order = rest[overlap < match_threshold]
+    return keep
 
 
 def compute_iou(box: np.ndarray, boxes: np.ndarray) -> float:

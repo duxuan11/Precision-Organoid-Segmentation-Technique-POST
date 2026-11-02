@@ -34,40 +34,147 @@ This repo is the official implementation of "[**Precision Organoid Segmentation 
 
 ### 🚀 Installation 
 
-#### Environment Setup
-**1. Create a Conda environment:**
-This project requires Python 3.10.0
+#### Environment Setup (uv)
+
+Dependencies are managed with [**uv**](https://docs.astral.sh/uv/): the Python version lives in
+`.python-version` (3.10), the dependencies are declared in `pyproject.toml`, and the exact pinned
+versions are locked in `uv.lock`. The old `requirements.txt` has been removed, so `pip install -r
+requirements.txt` no longer applies.
+
+**1. Install uv**
 ```bash
-conda create -n POST python==3.10.0
-conda activate POST
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+# Linux / macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
 **2. Clone and Install this repository:**
 ```bash
 git clone https://github.com/duxuan11/Precision-Organoid-Segmentation-Technique-POST.git
 cd Precision-Organoid-Segmentation-Technique-POST
 ```
 
-**3. Install Required Packages:**
+**3. Create the environment** - pick exactly one of the two (they are mutually exclusive, see
+`[tool.uv] conflicts`):
 ```bash
-pip install -r requirements.txt
+uv sync --extra gpu   # CUDA 11.8 + cuDNN 8: onnxruntime-gpu + torch(cu118), recommended
+uv sync --extra cpu   # CPU only: onnxruntime + torch(cpu)
+```
+`uv` downloads Python 3.10 when needed, creates `.venv/` at the repository root and also installs
+the `dev` dependency group (which provides `onnx`, used by the tests to synthesise fake ONNX
+graphs; add `--no-dev` if you only want the runtime dependencies). Switching between CPU and GPU is
+just another `uv sync --extra gpu` (`--extra cpu`): uv removes the packages that are no longer
+needed. If the environment ever gets into a weird state, rebuild it with `uv sync --extra gpu
+--reinstall`.
+
+**4. Run** - `uv run` always uses `.venv`, no manual activation needed:
+```bash
+uv run python inference.py --yolo_weight weights/yolo8_3_25.onnx \
+    --seg_encoder_weight weights/tinysam_encoder.onnx \
+    --seg_decoder_weight weights/tinysam_decoder.onnx \
+    --img_path img/example1.tiff --output_path result.png
+```
+You can also activate the environment in your shell: `source .venv/bin/activate` on Linux/macOS,
+`.venv\Scripts\activate` on Windows (`.venv\Scripts\Activate.ps1` in PowerShell).
+
+Other useful commands:
+```bash
+uv lock --upgrade                                # bump the versions in the lock file
+uv run python -m unittest discover -s tests -v   # run the tests
+uv sync --extra gpu --reinstall                  # force a clean rebuild of the environment
 ```
 
 ## 🚀 Quick Start: Inference & Visualization
 
 ### Inference
-Before run this script, you should download pre-trained models, and put them into weights file. 
+Before running this script, download the pre-trained models and put them in the `weights/`
+directory.
 ```shell
-python inference.py --yolo_weight weights/yolo8_3_25.onnx --seg_encoder_weight weights/tinysam_encoder.onnx --seg_decoder_weight weights/tinysam_decoder.onnx --img_path img/example1.tiff
+uv run python inference.py --yolo_weight weights/yolo8_3_25.onnx --seg_encoder_weight weights/tinysam_encoder.onnx --seg_decoder_weight weights/tinysam_decoder.onnx --img_path img/example1.tiff --output_path result.png
 ```
+
+#### Speed / memory tuning flags
+
+All of these have sensible defaults, the flags below only exist to trade speed against memory
+on your own hardware.
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--batch_size` | `8` | Number of image slices pushed through the YOLO ONNX model in one `session.run()`. Needs an ONNX graph exported with a dynamic batch dimension (`model.export(format="onnx", dynamic=True)`); otherwise the code automatically falls back to one slice at a time. |
+| `--standard_pred` | off | Also run the detector on the whole image. It costs roughly one extra full pass and is only useful for very large objects the slices might miss. |
+| `--seg_bbox_batch_size` | `50` | Boxes decoded per TinySAM decoder call. Lower it if you run out of VRAM. |
+| `--seg_mask_scale` | `1.0` | Resolution factor of the decoded masks. `0.5` gives ~4x less decoder output (VRAM/host memory) and barely changes the drawn contours. |
+| `--seg_encoder_device` | `cpu` | Where the TinySAM image encoder runs. Try `cuda:0` if the host CPU is slow. |
+| `--seg_decoder_device` | `cuda:0` | Where the TinySAM mask decoder runs. |
+
+Other changes that are always active: the input image is decoded once and shared between both
+stages, all slices are pre-processed as a single batch, the TinySAM decoder is called directly
+instead of through one joined thread per batch, mask bounding boxes are computed with
+`cv2.boundingRect` instead of `np.argwhere`, and NMS runs on a vectorised numpy/torchvision
+implementation.
+
+Verify the refactor on your machine with:
+```shell
+uv run python -m unittest discover -s tests -v          # equivalence tests (no weights required)
+uv run python tools/bench_slice_batching.py --img img/example1.tiff   # detector batching benchmark
+uv run python tools/bench_seg_decoder.py --boxes 300                  # mask decoder benchmark
+```
+
+#### Segmentation quality flags
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--enhance` | `none` | Contrast enhancement for the **TinySAM encoder input only** (the overlay still shows the original image). `clahe` = percentile clipping (kills specular highlights/bubble glare) + adaptive histogram equalisation, `lowcontrast` = the same but gated to images that look low contrast. Ported from [cellSAM](https://github.com/vanvalenlab/cellSAM). Kept `none` by default because the shipped encoder was fine-tuned with a fixed mean/std normalisation - validate on your own data before changing it. |
+| `--seg_iou_threshold` | `0.5` | Drop masks whose predicted IoU (the decoder's own score) is below this, so a failed mask prompt never reaches the result. `0` disables the gate. Graphs that return no score tensor disable it automatically. |
+| `--seg_min_area` | `25` | Drop masks smaller than this many pixels. `0` keeps everything. |
+| `--mask_output` | none | Write an **instance label map** (`0` = background, one id per mask) next to the visualization. |
+
+#### Instance label map
+
+`--output_path` keeps producing the blended PNG/SVG-style overlay for humans.
+`--mask_output` additionally writes a machine-readable mask for counting, area and
+morphology measurements:
+
+```shell
+uv run python inference.py --yolo_weight weights/yolo8_3_25.onnx \
+    --seg_encoder_weight weights/tinysam_encoder.onnx \
+    --seg_decoder_weight weights/tinysam_decoder.onnx \
+    --img_path img/example1.tiff --output_path result.png \
+    --mask_output result_mask.png
+```
+
+* `.npy` keeps the native `uint32` ids;
+* any other extension is written as a **16-bit** image (`cv2.imread(path, cv2.IMREAD_UNCHANGED)`),
+  and ids above 65535 raise an error instead of wrapping around;
+* ids are assigned in box order and a later mask overwrites an earlier one where they
+  overlap, the same rule the overlay uses;
+* the map is always at the **original image resolution** (nearest-neighbour upscaled from the
+  1024px decoder canvas, so no new label values are invented).
+
+In Python:
+
+```python
+from POST.tinysam.tiny_sam import TinySam, save_label_map
+from inference import tinysam_inference, object_detection_inference, read_image
+
+image = read_image("img/example1.tiff")
+boxes = object_detection_inference(image, detector)
+tinysam = TinySam(encoder_path=..., decoder_path=..., enhance="clahe")
+blend, label_map = tinysam_inference(image, boxes, tinysam, output_path="result.png")
+save_label_map("result_mask.png", label_map)   # or .npy for uint32 ids
+```
+
 ### Training
-**1. Install YOLO Packages:**
-```shell
-pip install ultralytics==8.0.224
-```
+**1. YOLO Packages:**
+`ultralytics==8.0.224` is already declared in `pyproject.toml`, so `uv sync --extra gpu` (or
+`--extra cpu`) installs it - no separate `pip install` needed.
 **2. Run Training Script:**
 ```shell
-python train.py --model_path weights/yolo8m.pt --data_path_yaml organoid.yaml --epochs 100 --img_size 1024 --batch_size 16
+uv run python train.py --model_path weights/yolo8m.pt --data_path_yaml organoid.yaml --epochs 100 --img_size 1024 --batch_size 16 --workers 8
 ```
+`train.py` now honours `--device` (previously it was hard-coded to GPU 0), uses mixed precision by
+default (`--no_amp` to disable) and accepts `--workers` / `--cache` to speed up the dataloader.
 You can refer to the training process of [yolov8](https://github.com/ultralytics/ultralytics) and [yolov9](https://github.com/WongKinYiu/yolov9), and download the pre-trained model.Then use these trained models in this code.
 **Notes:** Since Tinysam has already been fine-tuned on a large organoid dataset and converted to ONNX, no additional training is required.
 ### Pre-trained Models

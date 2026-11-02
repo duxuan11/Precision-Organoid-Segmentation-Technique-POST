@@ -9,6 +9,10 @@ import numpy as np
 
 #初始化参数，导入Onnxruntime
 class DetectionModel:
+    # Set to True by detection models whose `perform_inference` can consume a list of
+    # images and run them as a single batch (used by `get_sliced_prediction`).
+    supports_batch_inference = False
+
     def __init__(
         self,
         model_path: Optional[str] = None,

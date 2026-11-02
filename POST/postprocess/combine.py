@@ -9,6 +9,7 @@ import torch
 from POST.postprocess.utils import ObjectPredictionList, has_match, merge_object_prediction_pair
 from POST.models.prediction import ObjectPrediction
 from POST.utils.import_utils import check_requirements
+from POST.utils.yolov8onnx import greedy_nms
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,26 @@ def nms(
     Returns:
         A list of filtered indexes, Shape: [ ,]
     """
+    if predictions.shape[0] == 0:
+        return []
 
+    # Vectorised numpy implementation: the previous version looped in python and
+    # re-indexed the tensors on every kept box (O(n^2) tensor ops).
+    keep = greedy_nms(
+        predictions[:, :4].detach().cpu().numpy(),
+        predictions[:, 4].detach().cpu().numpy(),
+        match_threshold=match_threshold,
+        match_metric=match_metric,
+    )
+    return [int(index) for index in keep]
+
+
+def _nms_torch_reference(
+    predictions: torch.tensor,
+    match_metric: str = "IOU",
+    match_threshold: float = 0.5,
+):
+    """Reference implementation kept for comparison/debugging."""
     # we extract coordinates for every
     # prediction box present in P
     x1 = predictions[:, 0]

@@ -1,6 +1,6 @@
 import time
 from typing import List, Optional
-from POST.models.prediction import ObjectPrediction, PredictionResult
+from POST.models.prediction import ObjectPrediction, PredictionResult, _shift_prediction_inplace
 from POST.models.slicing import slice_image
 import numpy as np
 from POST.utils.cv import (
@@ -24,6 +24,17 @@ POSTPROCESS_NAME_TO_CLASS = {
 }
 
 
+def _image_to_array(image) -> np.ndarray:
+    """Return an HWC array for `image` without an avoidable ndarray -> PIL -> ndarray round trip.
+
+    Slices produced by `slice_image` are already numpy views of the source array, but the
+    previous implementation converted each of them to a PIL image and back for every slice.
+    """
+    if isinstance(image, np.ndarray):
+        return image
+    return np.ascontiguousarray(read_image_as_pil(image))
+
+
 def get_prediction(
     image,
     detection_model,
@@ -33,16 +44,18 @@ def get_prediction(
     verbose: int = 0,
 ) -> PredictionResult:
     """
-    Function for performing prediction for given image using given detection_model.
+    Function for performing prediction for given image (or batch of images) using given detection_model.
 
     Arguments:
-        image: str or np.ndarray
-            Location of image or numpy image matrix to slice
+        image: str, np.ndarray or list/tuple of those
+            Location of image, numpy image matrix to slice, or a list of images that is
+            fed to the model in a single forward pass when the model supports it.
         detection_model: model.DetectionMode
-        shift_amount: List
+        shift_amount: List or List[List]
             To shift the box and mask predictions from sliced image to full
-            sized image, should be in the form of [shift_x, shift_y]
-        full_shape: List
+            sized image, should be in the form of [shift_x, shift_y] (or a list of them
+            with one entry per image when a batch is given)
+        full_shape: List or List[List]
             Size of the full image, should be in the form of [height, width]
         postprocess: sahi.postprocess.combine.PostprocessPredictions
         verbose: int
@@ -56,22 +69,29 @@ def get_prediction(
     """
     durations_in_seconds = dict()
 
-    # read image as pil
-    image_as_pil = read_image_as_pil(image)
+    is_batched = isinstance(image, (list, tuple))
+    images = list(image) if is_batched else [image]
+    image_arrays = [_image_to_array(single_image) for single_image in images]
+    shift_amounts = list(shift_amount) if is_batched else [shift_amount]
+    full_shapes = list(full_shape) if is_batched else [full_shape]
+
     # get prediction
     time_start = time.time()
-    detection_model.perform_inference(np.ascontiguousarray(image_as_pil))
+    detection_model.perform_inference(image_arrays if is_batched else image_arrays[0])
     time_end = time.time() - time_start
     durations_in_seconds["prediction"] = time_end
 
     # process prediction
     time_start = time.time()
-    # works only with 1 batch
     detection_model.convert_original_predictions(
-        shift_amount=shift_amount,
-        full_shape=full_shape,
+        shift_amount=shift_amounts if is_batched else shift_amount,
+        full_shape=full_shapes if is_batched else full_shape,
     )
-    object_prediction_list: List[ObjectPrediction] = detection_model.object_prediction_list
+    object_prediction_list: List[ObjectPrediction] = [
+        object_prediction
+        for per_image_list in detection_model.object_prediction_list_per_image
+        for object_prediction in per_image_list
+    ]
 
     # postprocess matching predictions
     if postprocess is not None:
@@ -88,7 +108,9 @@ def get_prediction(
         )
 
     return PredictionResult(
-        image=image, object_prediction_list=object_prediction_list, durations_in_seconds=durations_in_seconds
+        image=images[0] if is_batched else image,
+        object_prediction_list=object_prediction_list,
+        durations_in_seconds=durations_in_seconds,
     )
 
 
@@ -109,20 +131,18 @@ def get_sliced_prediction(
     verbose: int = 1,
     merge_buffer_length: int = None,
     auto_slice_resolution: bool = True,
+    batch_size: int = 8,
 ) -> PredictionResult:
 
     # for profiling
     durations_in_seconds = dict()
-
-    # currently only 1 batch supported
-    num_batch = 1
 
     # create slices from full image
     time_start = time.time()
     slice_image_result = slice_image(
         image=image,
         output_file_name=output_file_name,  # ADDED OUTPUT FILE NAME TO (OPTIONALLY) SAVE SLICES
-        output_dir=interim_dir,  # ADDED INTERIM DIRECTORY TO (OPTIONALLY) SAVE SLICES
+        output_dir=interim_dir if output_file_name else None,  # do not create an unused directory
         slice_height=slice_height,
         slice_width=slice_width,
         overlap_height_ratio=overlap_height_ratio,
@@ -149,43 +169,56 @@ def get_sliced_prediction(
     )
 
     # create prediction input
-    num_group = int(num_slices / num_batch)
     if verbose == 1 or verbose == 2:
         #tqdm.write(f"Performing prediction on {num_slices} number of slices.")
         print(f"Performing prediction on {num_slices} number of slices.")
     object_prediction_list = []
     # perform sliced prediction
-    start = time.time()
 
-    for group_ind in range(num_group):
-        # prepare batch (currently supports only 1 batch)
-        image_list = []
-        shift_amount_list = []
-        for image_ind in range(num_batch):
-            image_list.append(slice_image_result.images[group_ind * num_batch + image_ind])
-            shift_amount_list.append(slice_image_result.starting_pixels[group_ind * num_batch + image_ind])
+    # Feed several slices to the detector in a single forward pass. Models that cannot
+    # batch (e.g. torch models taken from ultralytics) simply get one slice at a time.
+    supports_batch = bool(getattr(detection_model, "supports_batch_inference", False))
+    num_batch = max(1, int(batch_size or 1)) if supports_batch else 1
+    full_shape = [
+        slice_image_result.original_image_height,
+        slice_image_result.original_image_width,
+    ]
+
+    # access the sliced image list directly: the `images`/`starting_pixels` properties
+    # rebuild a full list on every access (O(n_slices) per slice before).
+    sliced_images = slice_image_result.sliced_image_list
+    for group_start in range(0, num_slices, num_batch):
+        group = sliced_images[group_start : group_start + num_batch]
+        image_list = [sliced_image.image for sliced_image in group]
+        shift_amount_list = [sliced_image.starting_pixel for sliced_image in group]
+
         # perform batch prediction
-        one_time = time.time()
-        prediction_result = get_prediction(
-            image=image_list[0],
-            detection_model=detection_model,
-            shift_amount=shift_amount_list[0],
-            full_shape=[
-                slice_image_result.original_image_height,
-                slice_image_result.original_image_width,
-            ],
-        )
-        one_time_2 = time.time()
-        #print("单次耗时：",one_time_2 - one_time)
+        if len(group) == 1:
+            prediction_result = get_prediction(
+                image=image_list[0],
+                detection_model=detection_model,
+                shift_amount=shift_amount_list[0],
+                full_shape=full_shape,
+            )
+            batch_object_predictions = prediction_result.object_prediction_list
+        else:
+            prediction_result = get_prediction(
+                image=image_list,
+                detection_model=detection_model,
+                shift_amount=shift_amount_list,
+                full_shape=[full_shape] * len(group),
+            )
+            batch_object_predictions = prediction_result.object_prediction_list
+
         # convert sliced predictions to full predictions
-        for object_prediction in prediction_result.object_prediction_list:
+        for object_prediction in batch_object_predictions:
             if object_prediction:  # if not empty
-                object_prediction_list.append(object_prediction.get_shifted_object_prediction())
+                object_prediction_list.append(_shift_prediction_inplace(object_prediction))
 
         # merge matching predictions during sliced prediction
         if merge_buffer_length is not None and len(object_prediction_list) > merge_buffer_length:
             object_prediction_list = postprocess(object_prediction_list)
-    end = time.time()
+    del sliced_images
     #print("推理总耗时：{}秒".format(end - start))
 
     # perform standard prediction

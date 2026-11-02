@@ -1,0 +1,60 @@
+[project]
+name = "post-organoid-segmentation"
+version = "1.0.0"
+description = "Precision Organoid Segmentation Technique (POST): an accurate algorithm for segmentation of any challenging bright-field organoid images."
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+license = { text = "Non-commercial, see README" }
+dependencies = [
+    "numpy==1.24.4",
+    "opencv-python==4.8.0.76",
+    "scikit-image==0.19.3",
+    "timm==0.9.7",
+    "ultralytics==8.0.224",
+]
+
+[project.optional-dependencies]
+# Pick exactly one extra: it decides which onnxruntime build, and which torch build (via
+# [tool.uv.sources] below), the environment is created with.
+cpu = [
+    "onnxruntime==1.15.0",
+    "torch==2.0.1",
+    "torchvision==0.15.2",
+]
+gpu = [
+    "onnxruntime-gpu==1.15.0",
+    "torch==2.0.1",
+    "torchvision==0.15.2",
+]
+
+[dependency-groups]
+# only needed to synthesise the fake ONNX graphs used by the test suite
+dev = ["onnx>=1.14"]
+
+[tool.uv]
+# this repository is an application, not an installable package
+package = false
+
+conflicts = [
+    [{ extra = "cpu" }, { extra = "gpu" }],
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu118", extra = "gpu" },
+]
+torchvision = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu118", extra = "gpu" },
+]

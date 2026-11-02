@@ -1,6 +1,7 @@
 from POST.models.auto_model import AutoDetectionModel
 from POST.models.predict import get_sliced_prediction
-from POST.tinysam.tiny_sam import TinySam, show_anns
+from POST.tinysam.tiny_sam import TinySam, save_label_map, show_anns
+from POST.utils.enhance import ENHANCE_MODES
 from PIL import Image
 import numpy as np
 import argparse
@@ -13,22 +14,30 @@ def read_image(img_path: str):
 
 
 def object_detection_inference(
-    image_path,
+    image,
     detection_model,
     slice_height=1024,
     slice_width=1224,
     overlap_height_ratio=0.15,
     overlap_width_ratio=0.15,
+    batch_size=8,
+    perform_standard_pred=False,
 ):
+    """Run the sliced YOLO detection.
+
+    `image` can be a path or an already opened `PIL.Image` (opening the file only once
+    avoids decoding the same tiff several times per run).
+    """
     sahi_dec = get_sliced_prediction(
-        image_path,
+        image,
         detection_model,
         slice_height=slice_height,
         slice_width=slice_width,
-        perform_standard_pred=True,
+        perform_standard_pred=perform_standard_pred,
         postprocess_class_agnostic=True,
         overlap_height_ratio=overlap_height_ratio,
         overlap_width_ratio=overlap_width_ratio,
+        batch_size=batch_size,
     )
     # save detection boxes and filter bubbles
     boxes = np.array(
@@ -48,8 +57,14 @@ def object_detection_inference(
     return boxes
 
 
-def tinysam_inference(image_path, boxes, tinysam, output_path=None):
-    image = read_image(image_path)
+def tinysam_inference(image, boxes, tinysam, output_path=None):
+    """`image` can be a path or an already opened `PIL.Image`.
+
+    Returns the blended overlay (or None when nothing was found) and the instance label map
+    at the original image resolution.
+    """
+    if not isinstance(image, Image.Image):
+        image = read_image(image)
     # set_image() launches a background thread that computes the image embedding.
     # Wait for it explicitly before decoding. The previous code used
     # threading.Thread(target=tinysam.set_image(image)), which called set_image()
@@ -58,7 +73,7 @@ def tinysam_inference(image_path, boxes, tinysam, output_path=None):
     tinysam.set_image(image)
     tinysam._get_image_embedding()
     mask_process = tinysam.predict_mask_from_bboxes(boxes)
-    show_anns(
+    blend_image = show_anns(
         mask_process.masks_list,
         mask_process.coord_list,
         mask_process.resized_width,
@@ -66,6 +81,8 @@ def tinysam_inference(image_path, boxes, tinysam, output_path=None):
         image,
         save_path=output_path,
     )
+    label_map = mask_process.label_map((image.size[1], image.size[0]))
+    return blend_image, label_map
 
 
 def main():
@@ -123,6 +140,73 @@ def main():
         help="Overlap width ratio for image slicing.",
     )
     parser.add_argument(
+        "--batch_size",
+        default=8,
+        type=int,
+        help="Number of slices pushed through the detector in a single forward pass. "
+        "Requires an onnx model exported with a dynamic batch dimension; falls back to 1 otherwise.",
+    )
+    parser.add_argument(
+        "--standard_pred",
+        action="store_true",
+        help="Also run the detector once on the full image (costs roughly one extra full pass).",
+    )
+    parser.add_argument(
+        "--seg_encoder_device",
+        default="cpu",
+        type=str,
+        help="Device for the TinySAM image encoder, e.g. 'cpu' or 'cuda:0'.",
+    )
+    parser.add_argument(
+        "--seg_decoder_device",
+        default="cuda:0",
+        type=str,
+        help="Device for the TinySAM mask decoder, e.g. 'cuda:0' or 'cpu'.",
+    )
+    parser.add_argument(
+        "--seg_bbox_batch_size",
+        default=50,
+        type=int,
+        help="Number of boxes decoded per TinySAM decoder call. Lower it to reduce VRAM usage.",
+    )
+    parser.add_argument(
+        "--seg_mask_scale",
+        default=1.0,
+        type=float,
+        help="Resolution factor of the decoder output masks (1.0 = full 1024px output). "
+        "Values < 1 save VRAM/memory at a small precision cost.",
+    )
+    parser.add_argument(
+        "--seg_iou_threshold",
+        default=0.5,
+        type=float,
+        help="Drop masks whose predicted IoU (TinySAM decoder score) is below this. 0 disables "
+        "the quality gate, which is also skipped automatically when the ONNX graph "
+        "returns no score tensor.",
+    )
+    parser.add_argument(
+        "--seg_min_area",
+        default=25,
+        type=int,
+        help="Drop masks smaller than this many pixels (0 keeps every mask).",
+    )
+    parser.add_argument(
+        "--enhance",
+        default="none",
+        choices=list(ENHANCE_MODES),
+        help="Contrast enhancement applied to the TinySAM encoder input only (never to the "
+        "overlay). 'clahe' clips bright outliers then equalises locally, 'lowcontrast' does "
+        "the same but only when the image looks low contrast. Default 'none' matches the "
+        "weights as they were exported.",
+    )
+    parser.add_argument(
+        "--mask_output",
+        default=None,
+        type=str,
+        help="Optional path for the instance label map (0 = background, one id per mask). "
+        "'.npy' keeps the uint32 ids, any other extension is written as a 16-bit image.",
+    )
+    parser.add_argument(
         "--device",
         default="cuda:0",
         type=str,
@@ -148,12 +232,32 @@ def main():
         },
         device=device,
     )
-    boxes = object_detection_inference(image_path, detection_model)
+    # read/decode the image once and hand the same object to both stages
+    image = read_image(image_path)
+    boxes = object_detection_inference(
+        image,
+        detection_model,
+        slice_height=args.slice_height,
+        slice_width=args.slice_width,
+        overlap_height_ratio=args.overlap_height_ratio,
+        overlap_width_ratio=args.overlap_width_ratio,
+        batch_size=args.batch_size,
+        perform_standard_pred=args.standard_pred,
+    )
     tinysam = TinySam(
         encoder_path=seg_encoder_weight,
         decoder_path=seg_decoder_weight,
+        encoder_device=args.seg_encoder_device,
+        decoder_device=args.seg_decoder_device,
+        bboxes_batch_size=args.seg_bbox_batch_size,
+        mask_scale=args.seg_mask_scale,
+        enhance=args.enhance,
+        iou_threshold=args.seg_iou_threshold,
+        min_area=args.seg_min_area,
     )
-    tinysam_inference(image_path, boxes, tinysam, output_path=args.output_path)
+    _, label_map = tinysam_inference(image, boxes, tinysam, output_path=args.output_path)
+    if args.mask_output:
+        save_label_map(args.mask_output, label_map)
 
 
 if __name__ == "__main__":

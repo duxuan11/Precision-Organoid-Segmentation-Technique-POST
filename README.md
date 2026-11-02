@@ -36,9 +36,10 @@ This repo is the official implementation of "[**Precision Organoid Segmentation 
 
 #### Environment Setup (uv)
 
-依赖由 [**uv**](https://docs.astral.sh/uv/) 管理：Python 版本写在 `.python-version`（3.10），
-依赖声明在 `pyproject.toml`，精确版本锁在 `uv.lock`。原来的 `requirements.txt` 已被移除，
-请不要再用 `pip install -r requirements.txt`。
+Dependencies are managed with [**uv**](https://docs.astral.sh/uv/): the Python version lives in
+`.python-version` (3.10), the dependencies are declared in `pyproject.toml`, and the exact pinned
+versions are locked in `uv.lock`. The old `requirements.txt` has been removed, so `pip install -r
+requirements.txt` no longer applies.
 
 **1. Install uv**
 ```bash
@@ -54,38 +55,43 @@ git clone https://github.com/duxuan11/Precision-Organoid-Segmentation-Technique-
 cd Precision-Organoid-Segmentation-Technique-POST
 ```
 
-**3. Create the environment** —— 二选一（两个 extra 互斥，见 `[tool.uv] conflicts`）：
+**3. Create the environment** - pick exactly one of the two (they are mutually exclusive, see
+`[tool.uv] conflicts`):
 ```bash
-uv sync --extra gpu   # CUDA 11.8 + cuDNN 8：onnxruntime-gpu + torch(cu118)，推荐
-uv sync --extra cpu   # 纯 CPU：onnxruntime + torch(cpu)
+uv sync --extra gpu   # CUDA 11.8 + cuDNN 8: onnxruntime-gpu + torch(cu118), recommended
+uv sync --extra cpu   # CPU only: onnxruntime + torch(cpu)
 ```
-`uv` 会自动下载 Python 3.10 并在仓库根目录创建 `.venv/`，同时安装 `dev` 依赖组
-（含测试用来合成假 ONNX 图的 `onnx`；只想要运行期依赖时加 `--no-dev`）。
-从 CPU 切到 GPU（或反向）时再执行一次 `uv sync --extra gpu`，uv 会自动移除多余的包。
+`uv` downloads Python 3.10 when needed, creates `.venv/` at the repository root and also installs
+the `dev` dependency group (which provides `onnx`, used by the tests to synthesise fake ONNX
+graphs; add `--no-dev` if you only want the runtime dependencies). Switching between CPU and GPU is
+just another `uv sync --extra gpu` (`--extra cpu`): uv removes the packages that are no longer
+needed. If the environment ever gets into a weird state, rebuild it with `uv sync --extra gpu
+--reinstall`.
 
-**4. Run** —— `uv run` 会自动使用 `.venv`，不必手动 activate：
+**4. Run** - `uv run` always uses `.venv`, no manual activation needed:
 ```bash
 uv run python inference.py --yolo_weight weights/yolo8_3_25.onnx \
     --seg_encoder_weight weights/tinysam_encoder.onnx \
     --seg_decoder_weight weights/tinysam_decoder.onnx \
     --img_path img/example1.tiff --output_path result.png
 ```
-也可以在 shell 里激活：Linux/macOS `source .venv/bin/activate`，Windows
-`.venv\Scripts\activate`（PowerShell 用 `.venv\Scripts\Activate.ps1`）。
+You can also activate the environment in your shell: `source .venv/bin/activate` on Linux/macOS,
+`.venv\Scripts\activate` on Windows (`.venv\Scripts\Activate.ps1` in PowerShell).
 
-其它常用命令：
+Other useful commands:
 ```bash
-uv lock --upgrade            # 升级锁文件里的版本
-uv run python -m unittest discover -s tests -v   # 跑测试
-uv sync --extra gpu --reinstall  # 依赖状态异常时强制重建
+uv lock --upgrade                                # bump the versions in the lock file
+uv run python -m unittest discover -s tests -v   # run the tests
+uv sync --extra gpu --reinstall                  # force a clean rebuild of the environment
 ```
 
 ## 🚀 Quick Start: Inference & Visualization
 
 ### Inference
-Before run this script, you should download pre-trained models, and put them into weights file. 
+Before running this script, download the pre-trained models and put them in the `weights/`
+directory.
 ```shell
-python inference.py --yolo_weight weights/yolo8_3_25.onnx --seg_encoder_weight weights/tinysam_encoder.onnx --seg_decoder_weight weights/tinysam_decoder.onnx --img_path img/example1.tiff --output_path result.png
+uv run python inference.py --yolo_weight weights/yolo8_3_25.onnx --seg_encoder_weight weights/tinysam_encoder.onnx --seg_decoder_weight weights/tinysam_decoder.onnx --img_path img/example1.tiff --output_path result.png
 ```
 
 #### Speed / memory tuning flags
@@ -131,7 +137,7 @@ uv run python tools/bench_seg_decoder.py --boxes 300                  # mask dec
 morphology measurements:
 
 ```shell
-python inference.py --yolo_weight weights/yolo8_3_25.onnx \
+uv run python inference.py --yolo_weight weights/yolo8_3_25.onnx \
     --seg_encoder_weight weights/tinysam_encoder.onnx \
     --seg_decoder_weight weights/tinysam_decoder.onnx \
     --img_path img/example1.tiff --output_path result.png \
@@ -161,8 +167,8 @@ save_label_map("result_mask.png", label_map)   # or .npy for uint32 ids
 
 ### Training
 **1. YOLO Packages:**
-`ultralytics==8.0.224` 已包含在 `pyproject.toml` 里，`uv sync --extra gpu`（或 `--extra cpu`）
-之后就装好了，不需要再单独 `pip install`。
+`ultralytics==8.0.224` is already declared in `pyproject.toml`, so `uv sync --extra gpu` (or
+`--extra cpu`) installs it - no separate `pip install` needed.
 **2. Run Training Script:**
 ```shell
 uv run python train.py --model_path weights/yolo8m.pt --data_path_yaml organoid.yaml --epochs 100 --img_size 1024 --batch_size 16 --workers 8

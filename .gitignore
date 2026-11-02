@@ -6,3 +6,4 @@ weights/
 datasets/
 .vscode/
 __pycache__/  # 字节码缓存目录
+.venv/

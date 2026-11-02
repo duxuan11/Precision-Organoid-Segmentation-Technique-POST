@@ -34,22 +34,50 @@ This repo is the official implementation of "[**Precision Organoid Segmentation 
 
 ### 🚀 Installation 
 
-#### Environment Setup
-**1. Create a Conda environment:**
-This project requires Python 3.10.0
+#### Environment Setup (uv)
+
+依赖由 [**uv**](https://docs.astral.sh/uv/) 管理：Python 版本写在 `.python-version`（3.10），
+依赖声明在 `pyproject.toml`，精确版本锁在 `uv.lock`。原来的 `requirements.txt` 已被移除，
+请不要再用 `pip install -r requirements.txt`。
+
+**1. Install uv**
 ```bash
-conda create -n POST python==3.10.0
-conda activate POST
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+# Linux / macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
 **2. Clone and Install this repository:**
 ```bash
 git clone https://github.com/duxuan11/Precision-Organoid-Segmentation-Technique-POST.git
 cd Precision-Organoid-Segmentation-Technique-POST
 ```
 
-**3. Install Required Packages:**
+**3. Create the environment** —— 二选一（两个 extra 互斥，见 `[tool.uv] conflicts`）：
 ```bash
-pip install -r requirements.txt
+uv sync --extra gpu   # CUDA 11.8 + cuDNN 8：onnxruntime-gpu + torch(cu118)，推荐
+uv sync --extra cpu   # 纯 CPU：onnxruntime + torch(cpu)
+```
+`uv` 会自动下载 Python 3.10 并在仓库根目录创建 `.venv/`，同时安装 `dev` 依赖组
+（含测试用来合成假 ONNX 图的 `onnx`；只想要运行期依赖时加 `--no-dev`）。
+从 CPU 切到 GPU（或反向）时再执行一次 `uv sync --extra gpu`，uv 会自动移除多余的包。
+
+**4. Run** —— `uv run` 会自动使用 `.venv`，不必手动 activate：
+```bash
+uv run python inference.py --yolo_weight weights/yolo8_3_25.onnx \
+    --seg_encoder_weight weights/tinysam_encoder.onnx \
+    --seg_decoder_weight weights/tinysam_decoder.onnx \
+    --img_path img/example1.tiff --output_path result.png
+```
+也可以在 shell 里激活：Linux/macOS `source .venv/bin/activate`，Windows
+`.venv\Scripts\activate`（PowerShell 用 `.venv\Scripts\Activate.ps1`）。
+
+其它常用命令：
+```bash
+uv lock --upgrade            # 升级锁文件里的版本
+uv run python -m unittest discover -s tests -v   # 跑测试
+uv sync --extra gpu --reinstall  # 依赖状态异常时强制重建
 ```
 
 ## 🚀 Quick Start: Inference & Visualization
@@ -82,9 +110,9 @@ implementation.
 
 Verify the refactor on your machine with:
 ```shell
-python -m unittest discover -s tests -v          # equivalence tests (no weights required)
-python tools/bench_slice_batching.py --img img/example1.tiff   # detector batching benchmark
-python tools/bench_seg_decoder.py --boxes 300                  # mask decoder benchmark
+uv run python -m unittest discover -s tests -v          # equivalence tests (no weights required)
+uv run python tools/bench_slice_batching.py --img img/example1.tiff   # detector batching benchmark
+uv run python tools/bench_seg_decoder.py --boxes 300                  # mask decoder benchmark
 ```
 
 #### Segmentation quality flags
@@ -132,13 +160,12 @@ save_label_map("result_mask.png", label_map)   # or .npy for uint32 ids
 ```
 
 ### Training
-**1. Install YOLO Packages:**
-```shell
-pip install ultralytics==8.0.224
-```
+**1. YOLO Packages:**
+`ultralytics==8.0.224` 已包含在 `pyproject.toml` 里，`uv sync --extra gpu`（或 `--extra cpu`）
+之后就装好了，不需要再单独 `pip install`。
 **2. Run Training Script:**
 ```shell
-python train.py --model_path weights/yolo8m.pt --data_path_yaml organoid.yaml --epochs 100 --img_size 1024 --batch_size 16 --workers 8
+uv run python train.py --model_path weights/yolo8m.pt --data_path_yaml organoid.yaml --epochs 100 --img_size 1024 --batch_size 16 --workers 8
 ```
 `train.py` now honours `--device` (previously it was hard-coded to GPU 0), uses mixed precision by
 default (`--no_amp` to disable) and accepts `--workers` / `--cache` to speed up the dataloader.

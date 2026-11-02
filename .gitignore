@@ -1,9 +1,16 @@
-__pycache__
+# Python bytecode / caches (git needs the bare directory name, no inline comments)
+__pycache__/
+*.py[cod]
 .pytest_cache/
-weights/
-.pt
-.onnx
-datasets/
-.vscode/
-__pycache__/  # 字节码缓存目录
+
+# Environments
 .venv/
+
+# Model weights and datasets (downloaded separately)
+weights/
+*.pt
+*.onnx
+datasets/
+
+# Editors
+.vscode/

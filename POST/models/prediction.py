@@ -1,4 +1,3 @@
-import copy
 from typing import Dict, List, Optional, Union
 import numpy as np
 from POST.models.annotation import ObjectAnnotation
@@ -110,9 +109,12 @@ class PredictionScore:
         Arguments:
             score: prediction score between 0 and 1
         """
-        # if score is a numpy object, convert it to python variable
-        if type(value).__module__ == "numpy":
-            value = copy.deepcopy(value).tolist()
+        # if score is a numpy object, convert it to a python variable
+        if isinstance(value, np.generic):
+            # .item() instead of deepcopy(...).tolist(): called once per prediction
+            value = value.item()
+        elif isinstance(value, np.ndarray):
+            value = value.tolist()
         # set score
         self.value = value
 
@@ -132,12 +134,50 @@ class PredictionResult:
         image: Union[Image.Image, str, np.ndarray],
         durations_in_seconds: Optional[Dict] = None,
     ):
-        self.image: Image.Image = read_image_as_pil(image)
-        self.image_width, self.image_height = self.image.size
+        # The PIL conversion used to happen eagerly here, which meant every sliced
+        # prediction re-encoded its slice to a PIL image that nobody ever read.
+        # Keep the source and convert only when `image` is actually accessed.
+        self._image_source = image
+        self._image: Optional[Image.Image] = image if isinstance(image, Image.Image) else None
         self.object_prediction_list: List[ObjectPrediction] = object_prediction_list
         self.durations_in_seconds = durations_in_seconds
 
+    @property
+    def image(self) -> Image.Image:
+        if self._image is None:
+            self._image = read_image_as_pil(self._image_source)
+            self._image_source = None
+        return self._image
 
+    @property
+    def image_width(self) -> int:
+        return self.image.size[0]
+
+    @property
+    def image_height(self) -> int:
+        return self.image.size[1]
+
+
+def _shift_prediction_inplace(object_prediction: "ObjectPrediction") -> "ObjectPrediction":
+    """Add the slice offset to a prediction without building a second copy of it.
+
+    `get_shifted_object_prediction()` allocates a whole new ObjectPrediction (BoundingBox,
+    Category, PredictionScore...), which for a few thousand slices worth of boxes is pure
+    overhead. The predictions handed to this helper are freshly created and not shared, so
+    mutating them is safe. Masked predictions still take the allocating path.
+    """
+    if object_prediction.mask is not None:
+        return object_prediction.get_shifted_object_prediction()
+    bbox = object_prediction.bbox
+    shift_x, shift_y = bbox.shift_x, bbox.shift_y
+    if shift_x or shift_y:
+        bbox.minx += shift_x
+        bbox.maxx += shift_x
+        bbox.miny += shift_y
+        bbox.maxy += shift_y
+        bbox.shift_x = 0
+        bbox.shift_y = 0
+    return object_prediction
 
 
 class ObjectPrediction(ObjectAnnotation):

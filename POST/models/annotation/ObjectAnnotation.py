@@ -306,7 +306,9 @@ class ObjectAnnotation:
 
         # if bbox is a numpy object, convert it to python List[float]
         if type(bbox).__module__ == "numpy":
-            bbox = copy.deepcopy(bbox).tolist()
+            # `tolist()` already returns a fresh list, the deepcopy was pure overhead
+            # (it ran once per predicted object, i.e. thousands of times per image)
+            bbox = bbox.tolist()
 
         # make sure bbox coords lie inside [0, image_size]
         xmin = max(bbox[0], 0)
